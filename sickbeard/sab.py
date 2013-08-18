@@ -33,6 +33,8 @@ except ImportError:
 from sickbeard.common import USER_AGENT
 from sickbeard import logger
 from sickbeard.exceptions import ex
+from sickbeard.providers.nzbto import NZBDownloader
+
 
 def sendNZB(nzb):
     """
@@ -74,13 +76,14 @@ def sendNZB(nzb):
     # if we get a raw data result we want to upload it to SAB
     elif nzb.resultType == "nzbdata":
         params['mode'] = 'addfile'
-        # if nzb.password:
-        #     multiPartParams = {"nzbfile": (nzb.name + "{{ " + nzb.password + " }}.nzb", nzb.extraInfo[0])}
-        # else:
-        #     multiPartParams = {"nzbfile": (nzb.name + ".nzb", nzb.extraInfo[0])}
-        multiPartParams = {"nzbfile": (nzb.name + ".nzb", nzb.extraInfo[0])}
+        extra_info = nzb.extraInfo[0]
 
-    if nzb.resultType == "nzb" and nzb.provider.getID() in ['nzbindex','nzbclub','nzbto']:
+        if isinstance(extra_info, NZBDownloader):
+            multiPartParams = {"nzbfile": (extra_info.name + ".nzb", extra_info.content)}
+        else:
+            multiPartParams = {"nzbfile": (nzb.name + ".nzb", extra_info)}
+
+    if nzb.resultType == "nzb" and nzb.provider.getID() in ['nzbindex', 'nzbclub', 'nzbto']:
         logger.log(u"Pretty name for SAB queue: " + nzb.name)
         params['nzbname'] = nzb.name
 

@@ -147,7 +147,7 @@ class NZBto(generic.NZBProvider):
             (title, url) = self._get_title_and_url(curItem)
 
             if not title or not url:
-                logger.log(u"The XML returned from the NZBClub RSS feed is incomplete, this result is unusable",
+                logger.log(u"One result returned from the nzb.to is incomplete, this result is unusable.",
                            logger.ERROR)
                 continue
             if not title == 'Not_Valid':
@@ -186,60 +186,22 @@ class NZBto(generic.NZBProvider):
 
         return result
 
-    def downloadNZB(self, result):
-        """
-        Download nzb file for search result. Nzb.to does not provide a api key service,
-        so we have to prefetch all nzb files. The filename format is: "name {{ password }}.nzb",
-        where the password is optional. If a password is provided we extract and save it to our result.
-        So Sickbeard recognizes the episode we remove the nzb.to file prefixes.
-        """
-        req = self.session.get(result.url)
-        #result.extraInfo = [req.content]
-        _, params = cgi.parse_header(req.headers.get('Content-Disposition', ''))
-        filename = os.path.splitext(params['filename'])[0]
-        logger.log('Downloaded nzb from nzb.to: "%s"' % filename, logger.DEBUG)
-
-        if filename.startswith('TV_'):
-            filename = filename[3:]
-
-        match = re.search('(.*)\{\{(.*)\}\}', filename)
-        result.extraInfo = [req.content]
-
-        if match:
-            result.name = match.group(1)
-            result.password = match.group(2)
-            #if there is a password, append it to the nzb file as meta tag... supported by sab > 0.7.8 AND nzbget 11
-            ElementTree.register_namespace("","http://www.newzbin.com/DTD/2003/nzb")
-            root = ElementTree.fromstring(req.content)
-            if not root.find("{http://www.newzbin.com/DTD/2003/nzb}head"):
-                head = ElementTree.SubElement(root, "head")
-                meta = ElementTree.SubElement(head, "meta", type="password")
-                meta.text = match.group(2)
-                result.extraInfo = [ElementTree.tostring(root)]
-        else:
-            result.name = filename
-            result.extraInfo = [req.content]
-
-        return result
-
     def findEpisode(self, episode, manualSearch=False):
         results = super(NZBto, self).findEpisode(episode, manualSearch)
-        new_results = []
 
         for result in results:
-            new_results.append(self.downloadNZB(result))
+            result.extraInfo.append(NZBDownloader(result, self.session))
 
-        return new_results
+        return results
 
     def findSeasonResults(self, show, season):
         results = super(NZBto, self).findSeasonResults(show, season)
-        new_results = {}
 
         for epNum, ep_results in results.items():
             for result in ep_results:
-                new_results.setdefault(epNum, []).append(self.downloadNZB(result))
+                result.extraInfo.append(NZBDownloader(result, self.session))
 
-        return new_results
+        return results
 
 
 class NNZBtoCache(tvcache.TVCache):
@@ -303,5 +265,62 @@ class NNZBtoCache(tvcache.TVCache):
         for item in data:
             self._parseItem(item)
 
+
+class NZBDownloader(object):
+    def __init__(self, provider_result, session):
+        self.provider_result = provider_result
+        self._session = session
+        self.fetched = False
+        self._name = ''
+        self._content = ''
+        self._password = ''
+
+    @property
+    def name(self):
+        if not self.fetched:
+            self.download()
+        return self._name
+
+    @property
+    def content(self):
+        if not self.fetched:
+            self.download()
+        return self._content
+
+    def download(self):
+        """
+        Download nzb file for search result. Nzb.to does not provide a api key service,
+        so we have to prefetch all nzb files. The filename format is: "name {{ password }}.nzb",
+        where the password is optional. If a password is provided we extract and save it to our result.
+        So Sickbeard recognizes the episode we remove the nzb.to file prefixes.
+        """
+        self.fetched = True
+        req = self._session.get(self.provider_result.url)
+        _, params = cgi.parse_header(req.headers.get('Content-Disposition', ''))
+        filename = os.path.splitext(params['filename'])[0]
+        logger.log('Downloaded nzb from nzb.to: "%s"' % filename, logger.DEBUG)
+
+        if filename.startswith('TV_'):
+            filename = filename[3:]
+
+        match = re.search('(.*)\{\{(.*)\}\}', filename)
+        self.provider_result.extraInfo = [req.content]
+
+        if match:
+            self._name = match.group(1)
+            self._password = match.group(2)
+            #if there is a password, append it to the nzb file as meta tag... supported by sab > 0.7.8 AND nzbget 11
+            ElementTree.register_namespace("", "http://www.newzbin.com/DTD/2003/nzb")
+            root = ElementTree.fromstring(req.content)
+            if not root.find("{http://www.newzbin.com/DTD/2003/nzb}head"):
+                head = ElementTree.SubElement(root, "head")
+                meta = ElementTree.SubElement(head, "meta", type="password")
+                meta.text = self._password
+                self._content = ElementTree.tostring(root)
+            else:
+                logger.log('Can\'t add password to nzb file: "%s"' % filename, logger.ERROR)
+        else:
+            self._name = filename
+            self._content = req.content
 
 provider = NZBto()
